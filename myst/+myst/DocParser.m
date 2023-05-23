@@ -33,14 +33,15 @@ classdef DocParser < handle
             propIdx = props.indices();
             for ii = 1:numel(propIdx)
                 p = this.Tree.select(propIdx(ii)); % p is a node in the tree
-                propBlocks(ii) = this.parseProperties(p);
+                propBlocks(ii) = this.parseProperties(p); 
             end
 
             % find and parse all the method blocks (keyword = methods)
             meths = mtfind(this.Tree, 'Kind', 'METHODS');
             methIdx = meths.indices();
             for ii = 1:numel(methIdx)
-                methBlocks(ii) = this.parseMethods(this.Tree.select(methIdx(ii)));
+                m = this.Tree.select(methIdx(ii));
+                methBlocks(ii) = this.parseMethods(m);
             end
         end
     end
@@ -73,100 +74,31 @@ classdef DocParser < handle
 
         end
 
-        function methBlock = parseMethods(mtree)
+        function methBlock = parseMethods(mnode)
+            % parse a method block
 
+            % create the output object
             methBlock = myst.Methods();
             attrStruct = struct("Description", "", "Hidden", false, ...
                 "Access", "public", "Static", false, "Abstract", false);
 
              % parse the the attributes
-            attr = mtree.Attr;         
+            attr = mnode.Attr;         
             if attr.count
-                attrs = myst.DocParser.getAttributes(attr.Arg, attrStruct);
+                attrs = myst.DocParser.parseAttributes(attr.Arg, attrStruct);
                 methBlock.setAttributes(attrs);
             end
             
             % parse the individual functions
-            current = mtree.Tree.mtfind('Kind','FUNCTION');
-
-            while ~isempty(current)
-
-                methBlock.Functions(end + 1) = myst.Function();
-
-                methBlock.Functions(end).Name = string(current.Fname);
-                if ~isempty(current.Ins)
-                    in = current.Ins;
-                    while ~isempty(in)
-                        if in.kind == "NOT"
-                            methBlock.Functions(end).Inputs(end + 1) = "~";
-                        else
-                            methBlock.Functions(end).Inputs(end + 1) = string(in);
-                        end
-                        in = in.Next;
-                    end
+            mtree = mnode.Tree;
+            funIdx = indices(mnode.Tree.mtfind('Kind','FUNCTION'));
+            for ii = 1:numel(funIdx)
+                f = mtree.select(funIdx(ii));
+                % skip nested functions 
+                if f.trueparent.kind == "METHODS"
+                    methBlock.Functions(end + 1) = myst.DocParser.parseFunction(f);
                 end
-                if ~isempty(current.Outs)
-                    out = current.Outs;
-                    while ~isempty(out)
-                        if out.kind == "NOT"
-                            methBlock.Functions(end).Outputs(end + 1) = "~";
-                        else
-                            methBlock.Functions(end).Outputs(end + 1) = string(out);
-                        end
-                        out = out.Next;
-                    end
-                end
-                
-                body = current.Body;
-                while ~isempty(body) && body.kind == "COMMENT"
-                    methBlock.Functions(end).Description(end + 1) = string(body);
-                    body = body.Next;
-                end
-
-                if ~isempty(current.Arguments)
-                    currarg = current.Arguments.Body;
-                    newarg = true;
-
-                    while ~isempty(currarg)
-                        if newarg
-                            methBlock.Functions(end).Arguments(end + 1) = myst.Property();
-                            newarg = false;
-                        end
-
-                        if currarg.kind == "COMMENT"
-                            methBlock.Functions(end).Arguments(end).Description(end + 1) = string(currarg);
-                        elseif currarg.kind == "ARGUMENT"
-                            methBlock.Functions(end).Arguments(end).Name = string(currarg.ArgumentValidation.VarName);
-
-                            if ~isempty(currarg.ArgumentValidation.VarType)
-                                methBlock.Functions(end).Arguments(end).Class = string(currarg.ArgumentValidation.VarType);
-                            end
-                            if ~isempty(currarg.ArgumentValidation.VarDimensions)
-                                dim = currarg.ArgumentValidation.VarDimensions;
-                                while ~isempty(dim)
-                                     if dim.kind == "COLON"
-                                         methBlock.Functions(end).Arguments(end).Size(end + 1) = ":";
-                                     else
-                                         methBlock.Functions(end).Arguments(end).Size(end + 1) = string(dim);
-                                     end
-                                     dim = dim.Next;
-                                end
-                            end
-
-                            if ~isempty(currarg.ArgumentInitialization)
-                                methBlock.Functions(end).Arguments(end).DefaultValue = currarg.ArgumentInitialization.tree2str();
-                            end
-                            newarg = true;
-                        end
-                        currarg = currarg.Next;
-                    end
-
-                end
-                current = current.Next;
-
             end
-
-
         end
 
 
@@ -237,6 +169,95 @@ classdef DocParser < handle
                     prop.DefaultValue = v.tree2str;
                 end
                 propList(end + 1) = prop;
+                node = node.Next;
+            end
+        end
+
+        function fcn = parseFunction(node)
+            % parse a function and return a myst.Function
+
+            % parse name and ios
+            fcn = myst.Function();
+            fcn.Name = string(node.Fname);
+            fcn.Inputs = myst.DocParser.parseIO(node.Ins);
+            fcn.Outputs = myst.DocParser.parseIO(node.Outs);
+            
+            % parse body for comments - they need to be next to the function
+            % definition
+            l = node.lineno;
+            body = node.Body;
+            while ~isempty(body) && body.kind == "COMMENT" && body.lineno == l+1
+                fcn.Description(end + 1) = string(body);
+                l = l+1;
+                body = body.Next;
+            end
+
+            % parse the arguments block
+            % TODO: there might be more than 1 arg block -> (output, repeating)
+            if ~isempty(node.Arguments)
+                args = myst.DocParser.parseArguments(node.Arguments.Body);
+                fcn.Arguments = args;
+            end
+
+
+        end
+
+        function argList = parseArguments(node)
+            % create the output
+            argList = myst.Property.empty();
+
+            while ~isempty(node)
+                % create the myst property related to this node
+                prop = myst.Property();
+
+                % parse the comments, if any, and add them to the description of 
+                % the property 
+                while node.kind == "COMMENT"
+                    prop.Description(end + 1) = string(node);
+                    node = node.Next;
+                end
+                
+                if node.kind ~= "ARGUMENT"
+                    error("Don't know what's happening in the ARGUMENT")
+                end
+                % argument name
+                prop.Name = string(node.ArgumentValidation.VarName);
+                if ~isempty(node.ArgumentValidation.VarNamedField)
+                    prop.Name = prop.Name + ...
+                        "." + string(node.ArgumentValidation.VarNamedField);
+                end
+                % argument type
+                if ~isempty(node.ArgumentValidation.VarType)
+                    prop.Class = string(node.ArgumentValidation.VarType);
+                end
+                % argument size
+                prop.Size = myst.DocParser.parseSize(node.ArgumentValidation.VarDimensions);
+                
+                % default value
+                if ~isempty(node.ArgumentInitialization)
+                    prop.DefaultValue = node.ArgumentInitialization.tree2str();
+                end
+                % save property and move to next
+                argList(end + 1) = prop;
+                node = node.Next;
+            end
+
+        end
+
+        function io = parseIO(node)
+            % parse a function input/output
+
+            io = string.empty();
+
+            % iterate through the node
+            while ~isempty(node)
+                % differenciate unspecified arguments (~)
+                if node.kind == "NOT"
+                    io(end + 1) = "~";
+                else
+                    io(end + 1) = string(node);
+                end
+                % move to next io
                 node = node.Next;
             end
         end
