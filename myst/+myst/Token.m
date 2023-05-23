@@ -1,4 +1,4 @@
-classdef (Abstract) Token
+classdef (Abstract) Token < handle
 
 %     properties (Abstract, Dependent, SetAccess = private)
 %         Ref

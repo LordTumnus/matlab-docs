@@ -19,26 +19,28 @@ classdef DocParser < handle
             if(this.Tree.count == 1 && strcmp(obj.Tree.kind(), 'ERR'))
                 error(this.Tree.string);
             end
-            % parse the components
-            this.parseComponents()
+            % parse the class
+            this.parseClass()
         end
     end
 
     methods 
 
-        function parseComponents(this)
-            % parse the properties
+        function parseClass(this)
+
+            % find and parse all the property blocks (keyword = "properties")
             props = mtfind(this.Tree, 'Kind', 'PROPERTIES');
             propIdx = props.indices();
             for ii = 1:numel(propIdx)
-                propBlocks(ii) = this.parseProperties(this.Tree.select(propIdx(ii)).Tree);
+                p = this.Tree.select(propIdx(ii)); % p is a node in the tree
+                propBlocks(ii) = this.parseProperties(p);
             end
 
-
+            % find and parse all the method blocks (keyword = methods)
             meths = mtfind(this.Tree, 'Kind', 'METHODS');
             methIdx = meths.indices();
             for ii = 1:numel(methIdx)
-                methBlocks(ii) = this.parseMethods(this.Tree.select(methIdx(ii)).Tree);
+                methBlocks(ii) = this.parseMethods(this.Tree.select(methIdx(ii)));
             end
         end
     end
@@ -49,62 +51,25 @@ classdef DocParser < handle
         function propBlock = parseProperties(ptree)
             % parse a property block
 
+            % create a property block object to store its attributes and 
+            % properties
             propBlock = myst.Properties();
+
+            % parse the attributes
             attrStruct = struct("Description", "", "Hidden", false, ...
-                "SetAccess", "public",  "GetAccess", "public", "Access", "public");
+                "SetAccess", "public",  "GetAccess", "public", ...
+                "Access", "public");
 
             % parse the the attributes
-            attr = ptree.mtfind('Kind', 'ATTRIBUTES');         
+            attr = ptree.Attr;         
             if attr.count
-                attrs = myst.DocParser.getAttributes(attr.Arg, attrStruct);
+                attrs = myst.DocParser.parseAttributes(attr.Arg, attrStruct);
                 propBlock.setAttributes(attrs);
             end
 
             % parse the individual properties
-            current = ptree.Body;
-            newprop = true;
-
-            while ~isempty(current)
-                if newprop
-                    propBlock.Props(end + 1) = myst.Property();
-                    newprop = false;
-                end
-
-                if current.kind == "COMMENT"
-                    propBlock.Props(end).Description(end + 1) = string(current);
-                else
-                    n = current.Left;
-                    v = current.Right;
-                    if(strcmp(n.kind, 'PROPTYPEDECL'))
-                        propBlock.Props(end).Name = string(n.VarName);
-                        if n.VarType.count
-                            propBlock.Props(end).Class = string(n.VarType);
-                        end
-                        if n.VarDimensions.count
-                            dim = n.VarDimensions;
-                            while ~isempty(dim)
-                                if dim.kind == "COLON"
-                                    propBlock.Props(end).Size(end + 1) = ":";
-                                else
-                                    propBlock.Props(end).Size(end + 1) = string(dim);
-                                end
-                                dim = dim.Next;
-                            end
-                        end
-                    elseif(strcmp(n.kind, 'ATBASE'))
-                        propBlock.Props(end).Name  = string(n.Left);
-                    else
-                        propBlock.Props(end).Name  = n.string;
-                    end
-                    if  ~v.isempty
-                        propBlock.Props(end).DefaultValue = v.tree2str;
-                    end
-                    newprop = true;
-                end
-                current = current.Next;
-            end
-
-
+            node = ptree.Body;
+            propBlock.Props = myst.DocParser.parseProperty(node);
 
         end
 
@@ -115,15 +80,14 @@ classdef DocParser < handle
                 "Access", "public", "Static", false, "Abstract", false);
 
              % parse the the attributes
-            attr = mtree.mtfind('Kind', 'ATTRIBUTES');         
+            attr = mtree.Attr;         
             if attr.count
                 attrs = myst.DocParser.getAttributes(attr.Arg, attrStruct);
                 methBlock.setAttributes(attrs);
             end
             
-
             % parse the individual functions
-            current = mtree.Body.mtfind('Kind','FUNCTION');
+            current = mtree.Tree.mtfind('Kind','FUNCTION');
 
             while ~isempty(current)
 
@@ -206,11 +170,16 @@ classdef DocParser < handle
         end
 
 
-        function s = getAttributes(tree, s)
-            current = tree;
-            while(~isempty(current))
-                n =  current.Left;
-                v = current.Right;
+        function s = parseAttributes(node, s)
+            % go through the attribute list defined by the first node, and 
+            % fill the input struct with the values of those attributes
+
+            % iterate through the nodes
+            while(~isempty(node))
+                % get left and right sides
+                n =  node.Left; 
+                v = node.Right;
+                % parse name from left
                 if(strcmp(n.kind, 'PROPTYPEDECL'))
                     name = string(n.VarName);
                 elseif(strcmp(n.kind, 'ATBASE'))
@@ -218,17 +187,82 @@ classdef DocParser < handle
                 else
                     name = n.string;
                 end
+                % parse the value that matches the name -  if the values is 
+                % empty, defaults to the original value
                 if isfield(s, name) && ~v.isempty
-                    s.(name) = v.tree2str();
+                    s.(name) = v.tree2str(); % supports metaclasses
                 end
-                current = current.Next;
+                % next iter
+                node = node.Next;
             end
         end
-       
+
+
+        function propList = parseProperty(node)
+            % parse a property from a node
+
+            % create the output
+            propList = myst.Property.empty();
+
+            while ~isempty(node)
+                % create the myst property related to this node
+                prop = myst.Property();
+
+                % parse the comments, if any, and add them to the description of the
+                % property node
+                while node.kind == "COMMENT"
+                    prop.Description(end + 1) = string(node);
+                    node = node.Next;
+                end
+
+                % get the left and right properties of the node
+                n = node.Left;
+                v = node.Right;
+
+                % parse the property (name, type and size - avoids validation
+                % functions)
+                if(strcmp(n.kind, 'PROPTYPEDECL'))
+                    prop.Name = string(n.VarName); % name
+                    if ~isempty(n.VarType)
+                        prop.Class = string(n.VarType); % type
+                    end
+                    prop.Size = myst.DocParser.parseSize(n.VarDimensions);
+                elseif(strcmp(n.kind, 'ATBASE')) % ?
+                    prop.Name  = string(n.Left);
+                else
+                    prop.Name  = string(n);
+                end
+                % store the default value if available
+                if  ~v.isempty
+                    prop.DefaultValue = v.tree2str;
+                end
+                propList(end + 1) = prop;
+                node = node.Next;
+            end
+        end
+
+
+        function sz = parseSize(node)
+            % parse the size validation of a property/argument
+
+            sz = string.empty();
+            % iterate through the nodes, appending the values to a string array
+            % if the node is a colon, replace its size value by ":"
+            while ~isempty(node)
+                if node.kind == "COLON"
+                    sz(end + 1) = ":"; 
+                else
+                    sz(end + 1) = string(node); 
+                end
+                node = node.Next;
+            end
+        end
+        
     end
 
-
 end
+%#ok<*AGROW> 
+
 
 
 
