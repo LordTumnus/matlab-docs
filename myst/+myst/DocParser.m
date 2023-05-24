@@ -121,8 +121,13 @@ classdef DocParser < handle
                 end
                 % parse the value that matches the name -  if the values is 
                 % empty, defaults to the original value
-                if isfield(s, name) && ~v.isempty
-                    s.(name) = v.tree2str(); % supports metaclasses
+                if isfield(s, name)
+                    if ~v.isempty()
+                        s.(name) = v.tree2str(); % supports metaclasses
+                    else
+                        s.(name) = true; % default to true if unspecified
+                    end
+                else
                 end
                 % next iter
                 node = node.Next;
@@ -137,37 +142,55 @@ classdef DocParser < handle
             propList = myst.Property.empty();
 
             while ~isempty(node)
-                % create the myst property related to this node
-                prop = myst.Property();
 
-                % parse the comments, if any, and add them to the description of the
-                % property node
-                while node.kind == "COMMENT"
-                    prop.Description(end + 1) = string(node);
+                % parse the comments, if any, and add them to the description of
+                % the property node
+                description = string.empty();
+                lines = [];
+                while ~isempty(node) && node.kind == "COMMENT"
+                    lines(end + 1) = node.lineno();
+                    description(end + 1) = string(node);
                     node = node.Next;
                 end
+                % return here if after the comment there's nothing
+                if isempty(node)
+                    return;
+                end
+                % create the myst property related to this node
+                prop = myst.Property();
 
                 % get the left and right properties of the node
                 n = node.Left;
                 v = node.Right;
-
+              
                 % parse the property (name, type and size - avoids validation
-                % functions)
+                % functions), and store the value of the line
                 if(strcmp(n.kind, 'PROPTYPEDECL'))
                     prop.Name = string(n.VarName); % name
+                    line = n.VarName.lineno();
                     if ~isempty(n.VarType)
                         prop.Class = string(n.VarType); % type
                     end
                     prop.Size = myst.DocParser.parseSize(n.VarDimensions);
                 elseif(strcmp(n.kind, 'ATBASE')) % ?
                     prop.Name  = string(n.Left);
+                    line = n.Left.lineno();
                 else
                     prop.Name  = string(n);
+                    line = n.lineno();
                 end
                 % store the default value if available
                 if  ~v.isempty
                     prop.DefaultValue = v.tree2str;
                 end
+
+                % store the description
+                for ii = 1:numel(description)
+                    if lines(ii) == line - numel(description) + ii - 1
+                        prop.Description(end + 1) = description(ii);
+                    end
+                end
+
                 propList(end + 1) = prop;
                 node = node.Next;
             end
@@ -192,17 +215,42 @@ classdef DocParser < handle
                 body = body.Next;
             end
 
-            % parse the arguments block
-            % TODO: there might be more than 1 arg block -> (output, repeating)
+            % parse the arguments blocks
             if ~isempty(node.Arguments)
-                args = myst.DocParser.parseArguments(node.Arguments.Body);
+                args = myst.DocParser.parseArguments(node.Arguments);
                 fcn.Arguments = args;
             end
 
-
         end
 
-        function argList = parseArguments(node)
+        function args = parseArguments(node)
+            % parse the argument blocks inside a function
+
+            % create the list of argument blocks
+            args = myst.Arguments.empty();
+
+            while ~isempty(node)
+                % create an argument block
+                arg = myst.Arguments();
+
+                % set the attributes (Input, Output & Repeating)
+                attrs = struct("Repeating", false, "Input", true, "Output", false);
+                if ~isempty(node.Attr)
+                    pAttr = myst.DocParser.parseAttributes(node.Attr.Arg, attrs);
+                    arg.setAttributes(pAttr)
+                end
+
+                % parse the individual arguments (properties)
+                arg.Properties = myst.DocParser.parseArgumentList(node.Body);
+                args(end + 1) = arg;
+                node = node.Next;
+            end
+        end
+
+        function argList = parseArgumentList(node)
+            % parse the indivudual arguments inside an arguments block (as
+            % properties)
+
             % create the output
             argList = myst.Property.empty();
 
@@ -211,21 +259,29 @@ classdef DocParser < handle
                 prop = myst.Property();
 
                 % parse the comments, if any, and add them to the description of 
-                % the property 
+                % the property
+                lines = [];
+                description = string.empty();
                 while node.kind == "COMMENT"
-                    prop.Description(end + 1) = string(node);
+                    description(end + 1) = string(node);
+                    lines(end + 1) = node.lineno();
                     node = node.Next;
+                end
+                % return here if after the comment there's nothing
+                if isempty(node)
+                    return;
                 end
                 
                 if node.kind ~= "ARGUMENT"
                     error("Don't know what's happening in the ARGUMENT")
                 end
                 % argument name
-                prop.Name = string(node.ArgumentValidation.VarName);
+                prop.Name = string(node.ArgumentValidation.VarName);                
                 if ~isempty(node.ArgumentValidation.VarNamedField)
                     prop.Name = prop.Name + ...
                         "." + string(node.ArgumentValidation.VarNamedField);
                 end
+
                 % argument type
                 if ~isempty(node.ArgumentValidation.VarType)
                     prop.Class = string(node.ArgumentValidation.VarType);
@@ -233,6 +289,15 @@ classdef DocParser < handle
                 % argument size
                 prop.Size = myst.DocParser.parseSize(node.ArgumentValidation.VarDimensions);
                 
+
+                % get also the arg line & store the description
+                line = node.ArgumentValidation.VarName.lineno();
+                for ii = 1:numel(description)
+                    if lines(ii) == line - numel(description) + ii - 1
+                        prop.Description(end + 1) = description(ii);
+                    end
+                end
+
                 % default value
                 if ~isempty(node.ArgumentInitialization)
                     prop.DefaultValue = node.ArgumentInitialization.tree2str();

@@ -5,7 +5,7 @@ classdef Function < myst.Token
         Description string
         Inputs string
         Outputs string
-        Arguments myst.Property
+        Arguments myst.Arguments
     end
 
     methods
