@@ -1,39 +1,24 @@
 classdef Class < myst.Token
     
 
-    properties (SetAccess = ?myst.Parser)
+    properties (SetAccess = ?myst.DocParser)
         Name string
         Description string
-        DetailedDescription string
         Abstract
-        SuperClasses myst.Class
-        Properties myst.Property
-        Methods myst.Method
-        GeneratesDoc logical = true;
+        Hidden
+        SuperClasses string
+        Properties myst.Properties
+        Methods myst.Methods
     end
 
-    methods 
-        function this = Class(name)
-            this.Name = name;
-        end
-
-        function r = getTypeReference(this)
-            if this.GeneratesDoc
-                r = sprintf("[%s]{#%s .type}", this.Name, this.Name);
-            else
-                r = sprintf("[%s]{.type}", this.Name);
-            end
+    methods
+        function setAttributes(this, attr)
+            this.Abstract = attr.Abstract;
+            this.Hidden = attr.Hidden;
         end
     end
 
     methods
-        function s = generateDocument(this, folder) %#ok<INUSD>
-            if this.GeneratesDoc
-                s = this.toMarkdown();
-                % [TODO]: generate markdown file in folder
-            end
-        end
-    
         function md = toMarkdown(this)
             md = "";
         end

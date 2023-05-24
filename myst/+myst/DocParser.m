@@ -7,47 +7,83 @@ classdef DocParser < handle
     end
 
     methods 
-        function parse(this, name)
+        function out = parse(this, name)
             % PARSE parses the class whose name matches the input argument
 
             % store the full class name (with packages) and its file location
             this.Name = name;
             this.FileName = which(name);
             % get the mtree of the class
-            this.Tree = mtree(this.FileName, '-file', '-comments');
+            this.Tree = mtree(this.FileName, '-file', '-comments', '-cell');
             % if the files contains an error, report it back 
             if(this.Tree.count == 1 && strcmp(obj.Tree.kind(), 'ERR'))
                 error(this.Tree.string);
             end
-            % parse the class
-            this.parseClass()
+            
+            % differentiate between class and function
+            cnode = this.Tree.mtfind('Kind','CLASSDEF');
+            if ~isempty(cnode)
+                % parse the class
+                out = this.parseClass(cnode);
+            else
+                % parse the function
+                fIdx = indices(this.Tree.mtfind('Kind','FUNCTION'));
+                out = this.parseFunction(this.Tree.select(fIdx(1)));
+            end
+            % store the full name (packages included)
+            out.Name = this.Name;
         end
     end
-
-    methods 
-
-        function parseClass(this)
-
-            % find and parse all the property blocks (keyword = "properties")
-            props = mtfind(this.Tree, 'Kind', 'PROPERTIES');
-            propIdx = props.indices();
-            for ii = 1:numel(propIdx)
-                p = this.Tree.select(propIdx(ii)); % p is a node in the tree
-                propBlocks(ii) = this.parseProperties(p); 
-            end
-
-            % find and parse all the method blocks (keyword = methods)
-            meths = mtfind(this.Tree, 'Kind', 'METHODS');
-            methIdx = meths.indices();
-            for ii = 1:numel(methIdx)
-                m = this.Tree.select(methIdx(ii));
-                methBlocks(ii) = this.parseMethods(m);
-            end
-        end
-    end
-
 
     methods (Static)
+
+        function c = parseClass(node)
+
+            % initialize output object
+            c = myst.Class();
+
+            % parse attributes
+            attrs = struct("Hidden", false, "Abstract", false);            
+            if ~isempty(node.Cattr)
+                attr = myst.DocParser.parseAttributes(node.Cattr.Arg, attrs);
+                c.setAttributes(attr);
+            end
+            
+            % parse superclasses
+            cexpr = node.Cexpr;
+            if node.Cexpr.kind == "LT"
+                c.SuperClasses = myst.DocParser.parseSuperClasses(cexpr.Right);
+                c.Name = string(cexpr.Left);
+            else
+                c.Name = string(cexpr);
+            end
+            line = node.pos2lc(max(cexpr.Tree.endposition));
+
+            % parse comments
+            body = node.Body;
+            while body.kind == "COMMENT" && body.lineno() == line+1
+                c.Description = string(body);
+                body = body.Next;
+            end
+
+            % find and parse all the property blocks (keyword = "properties")
+            props = mtfind(node.Tree, 'Kind', 'PROPERTIES');
+            propIdx = props.indices();
+            for ii = 1:numel(propIdx)
+                p = node.Tree.select(propIdx(ii)); % p is a node in the tree
+                propBlocks(ii) = myst.DocParser.parseProperties(p); 
+            end
+            c.Properties = propBlocks;
+
+            % find and parse all the method blocks (keyword = methods)
+            meths = mtfind(node.Tree, 'Kind', 'METHODS');
+            methIdx = meths.indices();
+            for ii = 1:numel(methIdx)
+                m = node.Tree.select(methIdx(ii));
+                methBlocks(ii) = myst.DocParser.parseMethods(m);
+            end
+            c.Methods = methBlocks;
+        end
 
         function propBlock = parseProperties(ptree)
             % parse a property block
@@ -207,7 +243,8 @@ classdef DocParser < handle
             
             % parse body for comments - they need to be next to the function
             % definition
-            l = node.lineno;
+            l = max(node.Fname.lineno, ...
+                node.pos2lc(max(node.Ins.Tree.endposition)));
             body = node.Body;
             while ~isempty(body) && body.kind == "COMMENT" && body.lineno == l+1
                 fcn.Description(end + 1) = string(body);
@@ -341,6 +378,15 @@ classdef DocParser < handle
                     sz(end + 1) = string(node); 
                 end
                 node = node.Next;
+            end
+        end
+
+        function s = parseSuperClasses(node)
+            if node.kind == "AND"
+                s = {string(node.Left)};
+                s = [s myst.DocParser.parseSuperClasses(node.Right)];
+            else
+                s = {string(node)};
             end
         end
         
