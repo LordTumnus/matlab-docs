@@ -1,14 +1,14 @@
-classdef Properties < myst.Token
+classdef Properties < parser.types.Token
 
     properties
         Description
         Mode
         Hidden
 
-        Props myst.Property
+        Props parser.types.Property
     end
 
-    methods (Access = ?myst.DocParser)
+    methods (Access = ?parser.DocParser)
         function setAttributes(this, attr)
             this.Hidden = attr.Hidden;
             this.Description = attr.Description;
@@ -22,6 +22,11 @@ classdef Properties < myst.Token
         end
     end
     methods
+        function setFullName(this, className)
+            for ii = 1:numel(this.Props)
+                this.Props(ii).setFullName(className);
+            end
+        end
         function toMarkdown(~)
 
         end

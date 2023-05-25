@@ -1,58 +1,57 @@
-classdef DocParser < handle
+classdef DocParser
 
-    properties
-        Name (1,1) string
-        FileName (1,1) string
-        Tree (1,1) % mtree
+    methods (Access = private)
+        function this = DocParser()
+        end
     end
-
-    methods 
-        function out = parse(this, name)
+    methods (Static)
+        function out = parse(name)
             % PARSE parses the class whose name matches the input argument
 
             % store the full class name (with packages) and its file location
-            this.Name = name;
-            this.FileName = which(name);
+            fileName = which(name);
             % get the mtree of the class
-            this.Tree = mtree(this.FileName, '-file', '-comments', '-cell');
+            tree = mtree(fileName, '-file', '-comments', '-cell');
             % if the files contains an error, report it back 
-            if(this.Tree.count == 1 && strcmp(obj.Tree.kind(), 'ERR'))
-                error(this.Tree.string);
+            if(tree.count == 1 && strcmp(tree.kind(), 'ERR'))
+                error(tree.string);
             end
             
             % differentiate between class and function
-            cnode = this.Tree.mtfind('Kind','CLASSDEF');
+            cnode = tree.mtfind('Kind','CLASSDEF');
             if ~isempty(cnode)
                 % parse the class
-                out = this.parseClass(cnode);
+                out = parser.DocParser.parseClass(cnode);
+                % store the full name (packages included)
+                out.setFullName(name);
             else
                 % parse the function
-                fIdx = indices(this.Tree.mtfind('Kind','FUNCTION'));
-                out = this.parseFunction(this.Tree.select(fIdx(1)));
+                fIdx = indices(tree.mtfind('Kind','FUNCTION'));
+                out = parser.DocParser.parseFunction(tree.select(fIdx(1)));
+                out.FullName = name;
             end
-            % store the full name (packages included)
-            out.Name = this.Name;
+            
         end
     end
 
-    methods (Static)
+    methods (Static, Access = protected)
 
         function c = parseClass(node)
 
             % initialize output object
-            c = myst.Class();
+            c = parser.types.Class();
 
             % parse attributes
             attrs = struct("Hidden", false, "Abstract", false);            
             if ~isempty(node.Cattr)
-                attr = myst.DocParser.parseAttributes(node.Cattr.Arg, attrs);
+                attr = parser.DocParser.parseAttributes(node.Cattr.Arg, attrs);
                 c.setAttributes(attr);
             end
             
             % parse superclasses
             cexpr = node.Cexpr;
             if node.Cexpr.kind == "LT"
-                c.SuperClasses = myst.DocParser.parseSuperClasses(cexpr.Right);
+                c.SuperClasses = parser.DocParser.parseSuperClasses(cexpr.Right);
                 c.Name = string(cexpr.Left);
             else
                 c.Name = string(cexpr);
@@ -71,7 +70,7 @@ classdef DocParser < handle
             propIdx = props.indices();
             for ii = 1:numel(propIdx)
                 p = node.Tree.select(propIdx(ii)); % p is a node in the tree
-                propBlocks(ii) = myst.DocParser.parseProperties(p); 
+                propBlocks(ii) = parser.DocParser.parseProperties(p); 
             end
             c.Properties = propBlocks;
 
@@ -80,7 +79,7 @@ classdef DocParser < handle
             methIdx = meths.indices();
             for ii = 1:numel(methIdx)
                 m = node.Tree.select(methIdx(ii));
-                methBlocks(ii) = myst.DocParser.parseMethods(m);
+                methBlocks(ii) = parser.DocParser.parseMethods(m);
             end
             c.Methods = methBlocks;
         end
@@ -90,7 +89,7 @@ classdef DocParser < handle
 
             % create a property block object to store its attributes and 
             % properties
-            propBlock = myst.Properties();
+            propBlock = parser.types.Properties();
 
             % parse the attributes
             attrStruct = struct("Description", "", "Hidden", false, ...
@@ -100,13 +99,13 @@ classdef DocParser < handle
             % parse the the attributes
             attr = ptree.Attr;         
             if attr.count
-                attrs = myst.DocParser.parseAttributes(attr.Arg, attrStruct);
+                attrs = parser.DocParser.parseAttributes(attr.Arg, attrStruct);
                 propBlock.setAttributes(attrs);
             end
 
             % parse the individual properties
             node = ptree.Body;
-            propBlock.Props = myst.DocParser.parseProperty(node);
+            propBlock.Props = parser.DocParser.parseProperty(node);
 
         end
 
@@ -114,14 +113,14 @@ classdef DocParser < handle
             % parse a method block
 
             % create the output object
-            methBlock = myst.Methods();
+            methBlock = parser.types.Methods();
             attrStruct = struct("Description", "", "Hidden", false, ...
                 "Access", "public", "Static", false, "Abstract", false);
 
              % parse the the attributes
             attr = mnode.Attr;         
             if attr.count
-                attrs = myst.DocParser.parseAttributes(attr.Arg, attrStruct);
+                attrs = parser.DocParser.parseAttributes(attr.Arg, attrStruct);
                 methBlock.setAttributes(attrs);
             end
             
@@ -132,7 +131,7 @@ classdef DocParser < handle
                 f = mtree.select(funIdx(ii));
                 % skip nested functions 
                 if f.trueparent.kind == "METHODS"
-                    methBlock.Functions(end + 1) = myst.DocParser.parseFunction(f);
+                    methBlock.Functions(end + 1) = parser.DocParser.parseFunction(f);
                 end
             end
         end
@@ -175,7 +174,7 @@ classdef DocParser < handle
             % parse a property from a node
 
             % create the output
-            propList = myst.Property.empty();
+            propList = parser.types.Property.empty();
 
             while ~isempty(node)
 
@@ -193,7 +192,7 @@ classdef DocParser < handle
                     return;
                 end
                 % create the myst property related to this node
-                prop = myst.Property();
+                prop = parser.types.Property();
 
                 % get the left and right properties of the node
                 n = node.Left;
@@ -207,7 +206,7 @@ classdef DocParser < handle
                     if ~isempty(n.VarType)
                         prop.Class = string(n.VarType); % type
                     end
-                    prop.Size = myst.DocParser.parseSize(n.VarDimensions);
+                    prop.Size = parser.DocParser.parseSize(n.VarDimensions);
                 elseif(strcmp(n.kind, 'ATBASE')) % ?
                     prop.Name  = string(n.Left);
                     line = n.Left.lineno();
@@ -233,13 +232,13 @@ classdef DocParser < handle
         end
 
         function fcn = parseFunction(node)
-            % parse a function and return a myst.Function
+            % parse a function and return a parser.Function
 
             % parse name and ios
-            fcn = myst.Function();
+            fcn = parser.types.Function();
             fcn.Name = string(node.Fname);
-            fcn.Inputs = myst.DocParser.parseIO(node.Ins);
-            fcn.Outputs = myst.DocParser.parseIO(node.Outs);
+            fcn.Inputs = parser.DocParser.parseIO(node.Ins);
+            fcn.Outputs = parser.DocParser.parseIO(node.Outs);
             
             % parse body for comments - they need to be next to the function
             % definition
@@ -254,7 +253,7 @@ classdef DocParser < handle
 
             % parse the arguments blocks
             if ~isempty(node.Arguments)
-                args = myst.DocParser.parseArguments(node.Arguments);
+                args = parser.DocParser.parseArguments(node.Arguments);
                 fcn.Arguments = args;
             end
 
@@ -264,21 +263,21 @@ classdef DocParser < handle
             % parse the argument blocks inside a function
 
             % create the list of argument blocks
-            args = myst.Arguments.empty();
+            args = parser.types.Arguments.empty();
 
             while ~isempty(node)
                 % create an argument block
-                arg = myst.Arguments();
+                arg = parser.types.Arguments();
 
                 % set the attributes (Input, Output & Repeating)
                 attrs = struct("Repeating", false, "Input", true, "Output", false);
                 if ~isempty(node.Attr)
-                    pAttr = myst.DocParser.parseAttributes(node.Attr.Arg, attrs);
+                    pAttr = parser.DocParser.parseAttributes(node.Attr.Arg, attrs);
                     arg.setAttributes(pAttr)
                 end
 
                 % parse the individual arguments (properties)
-                arg.Properties = myst.DocParser.parseArgumentList(node.Body);
+                arg.Properties = parser.DocParser.parseArgumentList(node.Body);
                 args(end + 1) = arg;
                 node = node.Next;
             end
@@ -289,11 +288,11 @@ classdef DocParser < handle
             % properties)
 
             % create the output
-            argList = myst.Property.empty();
+            argList = parser.types.Property.empty();
 
             while ~isempty(node)
                 % create the myst property related to this node
-                prop = myst.Property();
+                prop = parser.types.Property();
 
                 % parse the comments, if any, and add them to the description of 
                 % the property
@@ -324,7 +323,7 @@ classdef DocParser < handle
                     prop.Class = string(node.ArgumentValidation.VarType);
                 end
                 % argument size
-                prop.Size = myst.DocParser.parseSize(node.ArgumentValidation.VarDimensions);
+                prop.Size = parser.DocParser.parseSize(node.ArgumentValidation.VarDimensions);
                 
 
                 % get also the arg line & store the description
@@ -382,9 +381,15 @@ classdef DocParser < handle
         end
 
         function s = parseSuperClasses(node)
+            % parse a list of superclasses
+
+            % if there's more than one, recursively call this method on the
+            % right side of the & expression
             if node.kind == "AND"
+                % I am using cells to avoid calling string(string()), which I
+                % find weird
                 s = {string(node.Left)};
-                s = [s myst.DocParser.parseSuperClasses(node.Right)];
+                s = [s parser.DocParser.parseSuperClasses(node.Right)];
             else
                 s = {string(node)};
             end

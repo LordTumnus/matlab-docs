@@ -4,8 +4,13 @@ classdef (Abstract) Token < handle
 %         Ref
 %     end
 %     
+    properties
+        FullName string
+    end
+    
     methods (Abstract)
         s = toMarkdown(this)
+        setFullName(this, name)
     end
 
 end

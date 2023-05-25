@@ -1,4 +1,4 @@
-classdef Arguments < myst.Token
+classdef Arguments < parser.types.Token
 
 
     properties
@@ -17,6 +17,9 @@ classdef Arguments < myst.Token
     end
 
     methods
+        function setFullName(~,~)
+            
+        end
         function toMarkdown(~)
 
         end

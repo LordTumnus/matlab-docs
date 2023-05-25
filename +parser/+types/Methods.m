@@ -1,20 +1,20 @@
-classdef Methods < myst.Token
+classdef Methods < parser.types.Token
 
-    properties (SetAccess = ?myst.DocParser)
+    properties (SetAccess = ?parser.DocParser)
         Abstract = false;
         Mode = "public";
         Hidden = false;
         Static = false;
         Description;
 
-        Functions myst.Function
+        Functions parser.types.Function
     end
 
     methods
         function this = Methods()
         end
     end
-    methods (Access = ?myst.DocParser)
+    methods (Access = ?parser.DocParser)
         function setAttributes(this, attr)
             this.Hidden = attr.Hidden;
             this.Static = attr.Static;
@@ -27,6 +27,12 @@ classdef Methods < myst.Token
     end
 
     methods 
+
+        function setFullName(this, className)
+            for ii = 1:numel(this.Functions)
+                this.Functions(ii).setFullName(className);
+            end
+        end
         function s = toMarkdown(this)
             
         end
