@@ -3,7 +3,11 @@ classdef Mold < handle
     %#ok<*NASGU> 
 
     properties
-        Methods struct
+        % METHODS: An struct whose field are any additional commands that the
+        % mold can parse, and whose values are the callbacks executed when the
+        % commands are found. Note: the callbacks must return a string to
+        % replace the command
+        Methods struct % = struct("my-command", @(args) myCallback(...args) ,...)
     end
     properties (Access = private)
         Env struct
@@ -11,6 +15,9 @@ classdef Mold < handle
 
     methods
         function this = Mold(env)
+            % MOLD constructor. 
+            % optionally takes a struct defining environment variables that will
+            % be used every time the mold bakes something
             arguments
                 env (1,1) struct = struct();
             end
@@ -19,15 +26,21 @@ classdef Mold < handle
         end
 
         function fn = bake(this, text)
+            % BAKE precompiles the input text and returns a function that can be
+            % evaluated with a struct(). The struct represents the $in element
+            % used within the text directives
             arguments
                 this (1,1) mold.Mold
                 text (1,1) string
             end
-
             fn = @(in) evaluate(in, compile(text), this);
         end
+    end
+
+    methods (Hidden)
 
         function out = escapeHTML(~, text)
+            % ESCAPEHTML is an INTERNAL method. Escapes the >,&," characters
             arguments
                 ~
                 text (1,1) string
@@ -37,9 +50,8 @@ classdef Mold < handle
         end
 
         function str = dispatch(this, command, varargin)
-            if ~isfield(this.Methods, command)
-                error("Unrecognize method") % TODO
-            end
+            % DISPATCH is an internal method. Evaluates the method callback with
+            % the given arguments (comma separated)
             str = feval(this.Methods.(command), varargin{:});
         end
     end
@@ -47,7 +59,6 @@ end
 
 
 function parts = tokenize(text)
-
 parts = cell.empty();
 pos = 0;
 
@@ -148,7 +159,6 @@ end
 end
 
 function out__ = evaluate(in,code, mold) %#ok<STOUT> 
-
 M__  = mold;
 if ~isempty(fieldnames(mold.Env))
     for f__ = fieldnames(mold.Env)
