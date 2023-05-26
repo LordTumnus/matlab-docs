@@ -1,2 +1,2 @@
-# matlab-myst-docs
-Autogenerate markdown documentation from .m files
+# matlab-docs
+Documentation from matlab classes and functions
